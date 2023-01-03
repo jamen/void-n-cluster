@@ -130,6 +130,8 @@ pub fn create_blue_noise<R: RngCore>(size: [u32; 2], mut rng: R) -> Vec<u8> {
         ones += 1;
     }
 
+    pattern.make_lut(false);
+
     // Phase 3
 
     let mut ones = pattern.bits.count_ones();

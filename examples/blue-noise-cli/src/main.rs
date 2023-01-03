@@ -5,7 +5,7 @@ use std::io::BufWriter;
 
 fn main() {
     let rng = rand::thread_rng();
-    let size = [64, 64];
+    let size = [256, 256];
     let noise = void_n_cluster::create_blue_noise(size, rng);
 
     let _ = fs::create_dir("./out");
