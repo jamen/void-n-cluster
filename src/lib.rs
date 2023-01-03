@@ -1,96 +1,54 @@
 use bitvec::prelude::{bitvec, BitVec};
 use rand_core::RngCore;
-use std::fs::File;
-use std::io::BufWriter;
 
 const SIGMA: f32 = 1.9;
 const TWO_SIGMA_SQUARED: f32 = 2.0 * SIGMA * SIGMA;
 
-pub struct BlueNoise<R: RngCore> {
-    width: usize,
-    pattern: BitVec,
-    pattern_iterations: Vec<BitVec>,
-    should_capture_iterations: bool,
+struct Pattern {
+    size: [u32; 2],
+    bits: BitVec,
     lut: Vec<f32>,
-    rng: R,
-    ranks: Vec<usize>,
-    noise: Vec<u8>,
 }
 
-impl<R: RngCore> BlueNoise<R> {
-    pub fn new(width: usize, should_capture_iterations: bool, rng: R) -> Self {
-        let len = width * width;
+impl Pattern {
+    fn new(size: [u32; 2]) -> Self {
+        let len = size[0] * size[1];
         Self {
-            width,
-            pattern: bitvec![1; len],
-            pattern_iterations: Vec::new(),
-            should_capture_iterations,
-            lut: vec![0.0f32; len],
-            rng,
-            ranks: vec![0; len],
-            noise: vec![0; len],
+            size,
+            bits: bitvec![0; len as usize],
+            lut: vec![0.0; len as usize],
         }
     }
 
-    pub fn init(&mut self) {
-        self.make_seed();
-        self.make_initial_pattern();
-        self.make_lut(true);
-        self.phase_1();
-        self.phase_2();
-        self.make_lut(false);
-        self.phase_3();
-        self.make_blue_noise();
-    }
-
-    fn make_seed(&mut self) {
-        let starting_amount = self.pattern.len() / 10;
-
-        for _ in 0..starting_amount {
-            let index = self.rng.next_u32() as usize % self.pattern.len();
-            self.write_pattern_value(index, false);
-        }
-
-        if self.should_capture_iterations {
-            self.pattern_iterations.push(self.pattern.clone());
-        }
-    }
-
-    fn make_initial_pattern(&mut self) {
-        loop {
-            // TODO: Panicless?
-            let tightest_cluster_index = self.find_tightest_cluster().unwrap();
-            self.write_pattern_value(tightest_cluster_index, false);
-
-            // TODO: Panicless?
-            let largest_void_index = self.find_largest_void().unwrap();
-            self.write_pattern_value(largest_void_index, true);
-
-            if self.should_capture_iterations {
-                self.pattern_iterations.push(self.pattern.clone());
-            }
-
-            if largest_void_index == tightest_cluster_index {
-                break;
-            }
-        }
-    }
-
-    fn make_lut(&mut self, write_ones: bool) {
+    fn make_lut(&mut self, ones: bool) {
         self.lut.fill(0.0);
-
-        for i in 0..self.pattern.len() {
-            if self.pattern[i] == write_ones {
-                self.write_pattern_value(i, write_ones);
-            }
+        for i in 0..self.bits.len() {
+            self.set(i, self.bits[i] == ones);
         }
     }
 
-    fn find_tightest_cluster(&self) -> Option<usize> {
+    fn set(&mut self, index: usize, value: bool) {
+        // set bit
+        self.bits.set(index, value);
+
+        // update lut
+        let [w, h] = self.size;
+
+        for target_index in 0..(w * h) {
+            self.lut[target_index as usize] +=
+                energy(index as u32, target_index, self.size) * if value { 1.0 } else { -1.0 }
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.bits.len()
+    }
+
+    fn tightest_cluster(&self) -> Option<usize> {
         self.find_lut_winner(true)
     }
 
-    fn find_largest_void(&self) -> Option<usize> {
+    fn largest_void(&self) -> Option<usize> {
         self.find_lut_winner(false)
     }
 
@@ -100,7 +58,7 @@ impl<R: RngCore> BlueNoise<R> {
 
         for i in 0..self.lut.len() {
             let energy = self.lut[i];
-            let bit = self.pattern[i];
+            let bit = self.bits[i];
             if bit == cluster {
                 if energy == best_value {
                     best_indices.push(i)
@@ -116,116 +74,102 @@ impl<R: RngCore> BlueNoise<R> {
 
         best_indices.first().copied()
     }
+}
 
-    pub fn write_pattern_value(&mut self, index: usize, value: bool) {
-        // set bit
-        self.pattern.set(index, value);
+pub fn create_blue_noise<R: RngCore>(size: [u32; 2], mut rng: R) -> Vec<u8> {
+    let mut pattern = Pattern::new(size);
 
-        // update LUT
-        let x = index % self.width;
-        let y = index / self.width;
-        let len = self.width * self.width;
+    // Random seed
 
-        for i in 0..len {
-            let px = i % self.width;
-            let py = i / self.width;
+    let starting_amount = pattern.len() / 10;
 
-            let mut disty = (py as f32 - y as f32).abs();
+    for _ in 0..starting_amount {
+        let index = rng.next_u32() as usize % pattern.len();
+        pattern.set(index, true);
+    }
 
-            if disty > (self.width / 2) as f32 {
-                disty = self.width as f32 - disty;
-            }
+    // Initial bits
 
-            let mut distx = (px as f32 - x as f32).abs();
+    loop {
+        let tightest_cluster_index = pattern.tightest_cluster().unwrap();
+        pattern.set(tightest_cluster_index, false);
 
-            if distx > (self.width / 2) as f32 {
-                distx = self.width as f32 - distx;
-            }
+        let largest_void_index = pattern.largest_void().unwrap();
+        pattern.set(largest_void_index, true);
 
-            let distance_squared = (distx * distx) as f32 + (disty * disty) as f32;
-
-            let energy =
-                (-distance_squared / TWO_SIGMA_SQUARED).exp() * if value { 1.0 } else { -1.0 };
-
-            self.lut[i] += energy;
+        if largest_void_index == tightest_cluster_index {
+            break;
         }
     }
 
-    pub fn phase_1(&mut self) {
-        let mut ones = self.pattern.count_ones();
-        // let starting_ones = ones;
-        while ones > 0 {
-            // TODO: Panicless?
-            let tightest_cluster_index = self.find_tightest_cluster().unwrap();
-            self.write_pattern_value(tightest_cluster_index, false);
-            ones -= 1;
-            self.ranks[tightest_cluster_index] = ones;
-        }
+    // Initial LUT
+
+    pattern.make_lut(true);
+
+    let mut ranks = vec![0; pattern.len()];
+
+    // Phase 1
+
+    let mut ones = pattern.bits.count_ones();
+
+    while ones > 0 {
+        let tightest_cluster_index = pattern.tightest_cluster().unwrap();
+        pattern.set(tightest_cluster_index, false);
+        ones -= 1;
+        ranks[tightest_cluster_index] = ones;
     }
 
-    pub fn phase_2(&mut self) {
-        let mut ones = self.pattern.count_ones();
-        // let starting_ones = ones;
-        while ones <= self.pattern.len() / 2 {
-            // let ones_done = ones - starting_ones;
-            // TODO: Panicless?
-            let largest_void_index = self.find_largest_void().unwrap();
-            self.write_pattern_value(largest_void_index, true);
-            self.ranks[largest_void_index] = ones;
-            ones += 1;
-        }
+    // Phase 2
+
+    let mut ones = pattern.bits.count_ones();
+
+    while ones <= pattern.len() / 2 {
+        let index = pattern.largest_void().unwrap();
+        pattern.set(index, true);
+        ranks[index] = ones;
+        ones += 1;
     }
 
-    pub fn phase_3(&mut self) {
-        let mut ones = self.pattern.count_ones();
+    // Phase 3
 
-        while let Some(largest_void_index) = self.find_largest_void() {
-            self.write_pattern_value(largest_void_index, true);
-            self.ranks[largest_void_index] = ones;
-            ones += 1;
-        }
+    let mut ones = pattern.bits.count_ones();
+
+    while let Some(largest_void_index) = pattern.largest_void() {
+        pattern.set(largest_void_index, true);
+        ranks[largest_void_index] = ones;
+        ones += 1;
     }
 
-    pub fn make_blue_noise(&mut self) {
-        for i in 0..self.pattern.len() {
-            self.noise[i] = (self.ranks[i] * 256 / self.pattern.len()) as u8;
-        }
+    // Finalize
+
+    let mut noise = vec![0u8; pattern.len()];
+
+    for i in 0..pattern.len() {
+        noise[i] = (ranks[i] * 256 / pattern.len()) as u8;
     }
 
-    pub fn write_noise_png(&self, file_name: &str) {
-        let file = File::create(file_name).unwrap();
-        let file_writer = BufWriter::new(file);
+    noise
+}
 
-        let width = self.width as u32;
-        let mut encoder = png::Encoder::new(file_writer, width, width);
+fn energy(a: u32, b: u32, [w, h]: [u32; 2]) -> f32 {
+    let ax = a % w;
+    let ay = a / h;
+    let bx = b % w;
+    let by = b / h;
 
-        encoder.set_color(png::ColorType::Grayscale);
-        encoder.set_depth(png::BitDepth::Eight);
+    let mut dx = (bx as f32 - ax as f32).abs();
 
-        let mut png_writer = encoder.write_header().unwrap();
-
-        png_writer.write_image_data(&self.noise).unwrap();
+    if dx > (w / 2) as f32 {
+        dx = w as f32 - dx;
     }
 
-    pub fn write_pattern_iteration_pngs(&self, file_prefix: &str) {
-        for (i, pattern) in self.pattern_iterations.iter().enumerate() {
-            let file = File::create(format!("{}{}.png", file_prefix, i)).unwrap();
-            let file_writer = BufWriter::new(file);
+    let mut dy = (by as f32 - ay as f32).abs();
 
-            let width = self.width as u32;
-            let mut encoder = png::Encoder::new(file_writer, width, width);
-
-            encoder.set_color(png::ColorType::Grayscale);
-            encoder.set_depth(png::BitDepth::Eight);
-
-            let mut png_writer = encoder.write_header().unwrap();
-
-            let image: Vec<u8> = pattern
-                .iter()
-                .map(|x| if *x.as_ref() { 255 } else { 0 })
-                .collect();
-
-            png_writer.write_image_data(&image).unwrap();
-        }
+    if dy > (h / 2) as f32 {
+        dy = h as f32 - dy;
     }
+
+    let distance_squared = (dx * dx) as f32 + (dy * dy) as f32;
+
+    (-distance_squared / TWO_SIGMA_SQUARED).exp()
 }

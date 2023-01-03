@@ -8,3 +8,4 @@ edition = "2021"
 [dependencies]
 void-n-cluster = { path = "../../" }
 rand = "0.8.5"
+png = "0.17.7"

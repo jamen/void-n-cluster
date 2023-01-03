@@ -8,5 +8,4 @@ exclude = [ "noise.png" ]
 
 [dependencies]
 bitvec = "1.0.1"
-png = "0.17.7"
 rand_core = { version = "0.6.4", features = [ "getrandom" ] }

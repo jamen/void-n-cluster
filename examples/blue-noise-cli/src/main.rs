@@ -1,12 +1,28 @@
 use std::fs;
-use void_n_cluster::BlueNoise;
+
+use std::fs::File;
+use std::io::BufWriter;
 
 fn main() {
     let rng = rand::thread_rng();
-    let width = 124;
-    let mut blue_noise = BlueNoise::new(width, true, rng);
-    blue_noise.init();
+    let size = [64, 64];
+    let noise = void_n_cluster::create_blue_noise(size, rng);
+
     let _ = fs::create_dir("./out");
-    blue_noise.write_pattern_iteration_pngs("./out/b1_pattern");
-    blue_noise.write_noise_png("./out/b1.png");
+
+    write_noise_png(&noise, size, "./out/noise.png");
+}
+
+fn write_noise_png(noise: &Vec<u8>, size: [u32; 2], file_name: &str) {
+    let file = File::create(file_name).unwrap();
+    let file_writer = BufWriter::new(file);
+
+    let mut encoder = png::Encoder::new(file_writer, size[0], size[1]);
+
+    encoder.set_color(png::ColorType::Grayscale);
+    encoder.set_depth(png::BitDepth::Eight);
+
+    let mut png_writer = encoder.write_header().unwrap();
+
+    png_writer.write_image_data(&noise).unwrap();
 }
