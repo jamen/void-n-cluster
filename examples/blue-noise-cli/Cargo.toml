@@ -1,12 +1,10 @@
 [package]
-name = "void-n-cluster"
+name = "blue-noise-cli"
 version = "0.1.0"
 edition = "2021"
-exclude = [ "noise.png" ]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-bitvec = "1.0.1"
-png = "0.17.7"
-rand_core = { version = "0.6.4", features = [ "getrandom" ] }
+void-n-cluster = { path = "../../" }
+rand = "0.8.5"

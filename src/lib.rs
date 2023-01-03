@@ -22,7 +22,7 @@ impl<R: RngCore> BlueNoise<R> {
         let len = width * width;
         Self {
             width,
-            pattern: bitvec![0; len],
+            pattern: bitvec![1; len],
             pattern_iterations: Vec::new(),
             should_capture_iterations,
             lut: vec![0.0f32; len],
@@ -48,7 +48,7 @@ impl<R: RngCore> BlueNoise<R> {
 
         for _ in 0..starting_amount {
             let index = self.rng.next_u32() as usize % self.pattern.len();
-            self.write_pattern_value(index, true);
+            self.write_pattern_value(index, false);
         }
 
         if self.should_capture_iterations {
@@ -132,22 +132,22 @@ impl<R: RngCore> BlueNoise<R> {
 
             let mut disty = (py as f32 - y as f32).abs();
 
-            if disty > self.width as f32 / 2.0 {
+            if disty > (self.width / 2) as f32 {
                 disty = self.width as f32 - disty;
             }
 
             let mut distx = (px as f32 - x as f32).abs();
 
-            if distx > self.width as f32 / 2.0 {
+            if distx > (self.width / 2) as f32 {
                 distx = self.width as f32 - distx;
             }
 
             let distance_squared = (distx * distx) as f32 + (disty * disty) as f32;
 
             let energy =
-                if value { 1.0 } else { -1.0 } * (-distance_squared * TWO_SIGMA_SQUARED).exp();
+                (-distance_squared / TWO_SIGMA_SQUARED).exp() * if value { 1.0 } else { -1.0 };
 
-            self.lut[index] += energy;
+            self.lut[i] += energy;
         }
     }
 
